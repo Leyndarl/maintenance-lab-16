@@ -1,0 +1,71 @@
+name: CI/CD Pipeline
+
+# Когда запускается
+on:
+  push:
+    branches: [ "main", "develop" ]  # Запуск на пуши в main и develop
+  pull_request:
+    branches: [ "main" ]             # Запуск на PR в main
+
+# Что делаем
+jobs:
+  # Этап 1: Тестирование (линтер + тесты)
+  test:
+    runs-on: ubuntu-latest
+    # Стратегия по версиям Python (для продвинутых)
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11"]
+
+    steps:
+      - name: Checkout репозитория
+        uses: actions/checkout@v4
+
+      - name: Установка Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Установка зависимостей
+        run: |
+          python -m pip install --upgrade pip
+          pip install flake8 pytest  # Устанавливаем линтер
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+      - name: Линтинг (flake8)
+        run: |
+          flake8 src --count --select=E9,F63,F7,F82 --show-source --statistics
+          flake8 src --count --exit-zero --max-complexity=10 --max-line-length=127 --statistics
+
+      - name: Запуск тестов (pytest)
+        run: |
+          pytest -v --tb=short  # Подробный вывод
+
+  # Этап 2: Сборка (выполняется только для ветки main и после успешных тестов)
+  package:
+    needs: test                     # Ждем зеленый статус от job 'test'
+    if: github.ref == 'refs/heads/main'  # Запускаем только для ветки main
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout репозитория
+        uses: actions/checkout@v4
+
+      - name: Создание структуры сборки
+        run: |
+          mkdir -p build_artifact
+          cp -r src app.py requirements.txt README.md build_artifact/ 2>/dev/null || :
+          echo "Сборка создана $(date)" > build_artifact/build_info.txt
+
+      - name: Упаковка в архив
+        run: |
+          cd build_artifact
+          zip -r ../app-build.zip .
+          cd ..
+
+      - name: Загрузка артефакта
+        uses: actions/upload-artifact@v4
+        with:
+          name: my-app-build-${{ github.sha }}  # Уникальное имя с хэшем коммита
+          path: app-build.zip
+          retention-days: 5                      # Хранить 5 дней
